@@ -45,6 +45,8 @@ verify() { # file expected_md5
   echo "  ok $file ($(du -h "$file" | cut -f1))"
 }
 
+TOK4096_REPO="onicai/llama_cpp_canister"
+TOK4096_MD5="ae4106c901b16bae216d22c4fb3af756"
 TOKENIZER_MODEL_MD5="eeec4125e9c7560836b4873b6f8e3025"
 TOKENIZER_BIN_MD5="c5a4f2f24b728689a3c4f9e4f79d5112"
 MODEL_MD5="644db0bc012b405d6baf99559272ab11"
@@ -66,9 +68,18 @@ echo "==> tokenizer.model + tokenizer.bin (SentencePiece, from karpathy/llama2.c
 verify tokenizer.model "$TOKENIZER_MODEL_MD5"
 verify tokenizer.bin "$TOKENIZER_BIN_MD5"
 
+echo "==> tok4096.gguf (second arena contestant, 33.4 MB)"
+if [ -f tok4096.gguf ] && [ "$(md5sum tok4096.gguf | cut -d' ' -f1)" = "$TOK4096_MD5" ]; then
+  echo "  already present"
+else
+  fetch "$TOK4096_REPO" "models/stories15Mtok4096.gguf" tok4096.gguf
+fi
+verify tok4096.gguf "$TOK4096_MD5"
+
 echo
 echo "Done. Files in $DEST:"
 ls -la
 echo
 echo "Next:  python np_llama.py --prompt 'Once upon a time'   # instant, numpy only"
 echo "       ./build.sh && python convert_llama2c_to_gguf.py ...   # faster llama.cpp path"
+echo "       ./build.sh && (cd ../lm_arena && python3 arena.py)   # battle arena with web UI"

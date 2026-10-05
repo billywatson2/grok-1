@@ -1,0 +1,25 @@
+{
+  "_comment": "Contestants seeded into the arena database on first run. 'local' models are GGUF files the arena starts llama-server for; 'openai' models are any OpenAI-compatible endpoint. See README.md for the full schema.",
+  "models": [
+    {
+      "name": "stories15M",
+      "kind": "local",
+      "config": {
+        "gguf": "../local_llama/models/stories15M-f16.gguf",
+        "port": 8201,
+        "ctx": 512,
+        "threads": 2
+      }
+    },
+    {
+      "name": "stories15M-tok4096",
+      "kind": "local",
+      "config": {
+        "gguf": "../local_llama/models/tok4096.gguf",
+        "port": 8202,
+        "ctx": 256,
+        "threads": 2
+      }
+    }
+  ]
+}

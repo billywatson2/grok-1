@@ -4,6 +4,9 @@ Run a **Llama model locally, offline, with no API keys** — three ways, from a
 dependency-free reference implementation up to llama.cpp with an
 OpenAI-compatible HTTP server and a browser playground.
 
+**See also:** [`../lm_arena`](../lm_arena) builds a blind A/B battle arena and Elo
+leaderboard on top of these models.
+
 This directory is self-contained and independent of the Grok-1 code at the repo
 root. (Grok-1 itself is a 314B-parameter model that needs a multi-GPU cluster —
 see [the repo README](../README.md) — so it is *not* what runs here.)

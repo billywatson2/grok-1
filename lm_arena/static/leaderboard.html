@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LM Arena · Leaderboard</title>
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <h1>LM Arena</h1>
+    <div class="links">
+      <a href="/">Battle</a>
+      <a href="/leaderboard" class="active">Leaderboard</a>
+    </div>
+    <div class="badges">
+      <span class="badge" id="b-votes">votes: …</span>
+      <span class="badge" id="b-models">contestants: …</span>
+    </div>
+  </nav>
+  <p class="sub">
+    Ratings start at 1000 and move by Elo (K=32) after every vote, exactly like a chess
+    ladder. The ± range is a 95% bootstrap interval from refitting Bradley-Terry on
+    resampled votes, so you can see when a gap is real and when it is noise.
+  </p>
+
+  <div class="panel">
+    <label class="field">Standings</label>
+    <table class="board" id="board">
+      <thead>
+        <tr>
+          <th class="rank">#</th><th>model</th><th>Elo</th><th>95% CI</th>
+          <th>W</th><th>L</th><th>T</th><th>win rate</th><th>votes</th><th>status</th>
+        </tr>
+      </thead>
+      <tbody><tr><td colspan="10" class="ci">loading…</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <label class="field">Recent battles</label>
+    <div class="history" id="history"><span class="ci">loading…</span></div>
+  </div>
+
+  <div class="panel">
+    <label class="field">How to read this</label>
+    <p class="sub" style="margin:0">
+      A model's Elo only moves when someone votes, and it moves more against strong
+      opponents. Ties count as half a win; “both bad” votes are recorded in the history
+      but deliberately excluded from the ratings. With only a handful of votes the
+      intervals stay wide — that is the honest state of a fresh arena, not a bug.
+      Ratings are not comparable to any public leaderboard: they depend on which models
+      are in <em>this</em> pool.
+    </p>
+  </div>
+</div>
+
+<script>
+async function load() {
+  const [board, health, battles] = await Promise.all([
+    fetch("/api/leaderboard").then((r) => r.json()),
+    fetch("/health").then((r) => r.json()),
+    fetch("/api/battles").then((r) => r.json()),
+  ]);
+
+  document.getElementById("b-votes").innerHTML = "votes: <b>" + health.votes + "</b>";
+  document.getElementById("b-models").innerHTML =
+    "contestants: <b>" + board.leaderboard.length + "</b>";
+
+  const rows = board.leaderboard.map((m) => `
+    <tr>
+      <td class="rank">${m.rank}</td>
+      <td><b>${m.name}</b>
+          ${m.context ? `<span class="ci"> · ctx ${m.context}</span>` : ""}</td>
+      <td class="elo">${m.elo.toFixed(0)}</td>
+      <td class="ci">±${((m.ci[1] - m.ci[0]) / 2).toFixed(0)}</td>
+      <td>${m.wins}</td><td>${m.losses}</td><td>${m.ties}</td>
+      <td>${m.win_rate === null ? "—" : (m.win_rate * 100).toFixed(0) + "%"}</td>
+      <td>${m.battles}</td>
+      <td>${m.available ? '<span class="pill on">ready</span>'
+                        : `<span class="pill off">${m.detail?.error || "offline"}</span>`}</td>
+    </tr>`).join("");
+  document.querySelector("#board tbody").innerHTML =
+    rows || '<tr><td colspan="10" class="ci">no models registered</td></tr>';
+
+  const items = battles.battles.map((b) => {
+    const outcome = b.winner === "both_bad" ? "both bad (not rated)"
+      : b.winner === "tie" ? "tie"
+      : b.winner === "a" ? `${b.name_a} won`
+      : b.winner ? `${b.name_b} won` : "unvoted";
+    const elo = b.elo_a_after === null ? "" :
+      ` · ${b.name_a} ${b.elo_a_after.toFixed(0)} / ${b.name_b} ${b.elo_b_after.toFixed(0)}`;
+    return `<div class="item">
+      <div class="prompt">${escapeHtml(b.prompt)}</div>
+      <div class="outcome">${b.name_a} vs ${b.name_b} → <b>${outcome}</b>${elo}</div>
+    </div>`;
+  }).join("");
+  document.getElementById("history").innerHTML =
+    items || '<span class="ci">no battles yet — go vote on some</span>';
+}
+
+function escapeHtml(s) {
+  return (s || "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+load();
+setInterval(load, 10000);
+</script>
+</body>
+</html>
