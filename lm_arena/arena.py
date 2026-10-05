@@ -54,6 +54,15 @@ DEFAULT_DB = HERE / "arena.db"
 DEFAULT_REGISTRY = HERE / "models.json"
 LLAMA_SERVER = HERE.parent / "local_llama" / "llama.cpp" / "build" / "bin" / "llama-server"
 
+# The offline phone app, offered as a download from here as well, so a single
+# preview port is enough to grab everything. Fixed names only.
+PHONE_DIR = HERE.parent / "phone"
+DOWNLOADS = {
+    "/LlamaPhone.html": (PHONE_DIR / "LlamaPhone.html", "text/html; charset=utf-8"),
+    "/LlamaPhoneLite.html": (PHONE_DIR / "LlamaPhoneLite.html", "text/html; charset=utf-8"),
+    "/LlamaPhone.llm": (PHONE_DIR / "LlamaPhone.llm", "application/octet-stream"),
+}
+
 # rating constants
 ELO_START = 1000.0
 ELO_K = 32.0
@@ -584,6 +593,20 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _download(self, path: Path, content_type: str) -> None:
+        """Like _file, but offered as a download so a phone browser saves it."""
+        if not path.exists():
+            self._json({"error": f"{path.name} not built yet (run "
+                                 f"tools/build_phone_app.py)"}, 404)
+            return
+        body = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
+        self.end_headers()
+        self.wfile.write(body)
+
     def _static(self, relative: str) -> None:
         """Serve a file from static/ without ever escaping it (path traversal)."""
         root = STATIC.resolve()
@@ -648,6 +671,9 @@ class Handler(BaseHTTPRequestHandler):
             self._file(STATIC / "sw.js", "text/javascript; charset=utf-8")
         elif route.startswith("/static/"):
             self._static(route[len("/static/"):])
+        elif route in DOWNLOADS:
+            path, content_type = DOWNLOADS[route]
+            self._download(path, content_type)
         elif route == "/health":
             self._json(self._health())
         elif route == "/api/models":
