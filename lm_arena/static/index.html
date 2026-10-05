@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>LM Arena</title>
+<meta name="description" content="Blind A/B battles between local language models." />
+<meta name="theme-color" content="#0f1115" />
+<meta name="color-scheme" content="dark" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Arena" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="icon" href="/static/icon-192.png" sizes="192x192" />
+<link rel="apple-touch-icon" href="/static/apple-touch-icon-180.png" />
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <h1>LM Arena</h1>
+    <div class="links">
+      <a href="/" class="active">Battle</a>
+      <a href="/leaderboard">Leaderboard</a>
+    </div>
+    <div class="badges">
+      <span class="badge" id="b-models">contestants: …</span>
+      <span class="badge" id="b-votes">votes: …</span>
+      <span class="badge" id="b-pwa" style="display:none">offline-ready</span>
+    </div>
+  </nav>
+  <p class="sub">
+    Two models answer the same prompt. Names stay hidden until you vote — that is what
+    keeps the rating honest. Everything runs locally through
+    <code>llama.cpp</code>; no API keys required.
+  </p>
+
+  <div class="panel">
+    <label class="field" for="prompt">Prompt</label>
+    <textarea id="prompt">Once upon a time, a small dragon who could not fly</textarea>
+    <div class="row" style="margin-top:10px">
+      <button class="ghost" id="randomize">Surprise me</button>
+      <span class="meta" id="prompt-hint"></span>
+    </div>
+
+    <div class="controls">
+      <div class="ctl">
+        <label for="max">Max tokens <span class="val" id="max-v">110</span></label>
+        <input type="range" id="max" min="32" max="220" step="10" value="110" />
+      </div>
+      <div class="ctl">
+        <label for="temp">Temperature <span class="val" id="temp-v">0.85</span></label>
+        <input type="range" id="temp" min="0" max="1.4" step="0.05" value="0.85" />
+      </div>
+      <div class="ctl">
+        <label>Pairing</label>
+        <select id="pairing"><option value="random">Random pair (blind)</option></select>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:14px">
+      <button id="go">Start battle</button>
+      <button id="stop" class="ghost" disabled>Stop</button>
+      <span class="meta" id="status">idle</span>
+    </div>
+  </div>
+
+  <div class="grid2" id="arena" style="display:none">
+    <div class="side a">
+      <div class="head"><span class="who" id="who-a">Model A</span>
+        <span id="meta-a" class="meta"></span></div>
+      <div class="out" id="out-a"></div>
+    </div>
+    <div class="side b">
+      <div class="head"><span class="who" id="who-b">Model B</span>
+        <span id="meta-b" class="meta"></span></div>
+      <div class="out" id="out-b"></div>
+    </div>
+  </div>
+
+  <div class="panel" id="vote-panel" style="display:none">
+    <label class="field">Which response is better?</label>
+    <div class="row">
+      <button class="vote a" id="vote-a" disabled>A is better</button>
+      <button class="vote b" id="vote-b" disabled>B is better</button>
+      <button class="vote" id="vote-tie" disabled>Tie</button>
+      <button class="vote" id="vote-bad" disabled>Both bad</button>
+      <span class="meta" id="vote-status">waiting for both models…</span>
+    </div>
+    <div id="reveal"></div>
+  </div>
+
+  <div class="panel">
+    <label class="field">Contestants</label>
+    <div class="row" id="contestants"></div>
+    <p class="sub" style="margin:10px 0 0">
+      Add any OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, OpenRouter…) with
+      <code>POST /api/models</code> — see the README.
+    </p>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const PROMPTS = [
+  "Once upon a time, a small dragon who could not fly",
+  "The little robot looked up at the night sky and",
+  "One morning, a girl found a door in the garden wall",
+  "There was a bear who loved to bake bread, and one day",
+  "The old lighthouse keeper heard a knock at the door",
+  "A tiny elephant wanted to swim in the big ocean",
+  "In a village made of paper, everyone was afraid of rain",
+  "The cat that could talk decided to tell the truth",
+  "Every night, the moon came down to drink from the lake",
+  "A boy traded his shadow for a pocket full of stars",
+];
+let controller = null, battleId = null, voted = false, running = false;
+
+["max", "temp"].forEach((id) => {
+  const sync = () => { $(id + "-v").textContent = id === "temp"
+      ? Number($(id).value).toFixed(2) : $(id).value; };
+  $(id).addEventListener("input", sync); sync();
+});
+
+function badge(id, key, value) {
+  $(id).innerHTML = key + ": <b>" + value + "</b>";
+}
+
+async function loadState() {
+  try {
+    const [models, health] = await Promise.all([
+      fetch("/api/models").then((r) => r.json()),
+      fetch("/health").then((r) => r.json()),
+    ]);
+    badge("b-models", "contestants", models.models.length);
+    badge("b-votes", "votes", health.votes);
+    const ready = models.models.filter((m) => m.available).length;
+    $("status").textContent = ready + " of " + models.models.length + " models ready";
+
+    $("contestants").innerHTML = models.models.map((m) => `
+      <span class="badge">${m.name} · ${m.elo.toFixed(0)} Elo
+        ${m.available ? '<span class="pill on">ready</span>'
+                      : '<span class="pill off">offline</span>'}
+      </span>`).join("");
+
+    const sel = $("pairing");
+    sel.innerHTML = '<option value="random">Random pair (blind)</option>' +
+      models.models.filter((m) => m.available)
+        .map((m) => `<option value="${m.name}">${m.name} + random opponent</option>`).join("");
+  } catch (e) { $("status").textContent = "server unreachable"; }
+}
+
+function resetArena() {
+  voted = false; battleId = null;
+  $("out-a").innerHTML = ""; $("out-b").innerHTML = "";
+  $("meta-a").textContent = ""; $("meta-b").textContent = "";
+  $("who-a").textContent = "Model A"; $("who-b").textContent = "Model B";
+  $("who-a").className = "who"; $("who-b").className = "who";
+  $("reveal").innerHTML = "";
+  setVoteEnabled(false);
+  $("vote-status").textContent = "waiting for both models…";
+}
+
+function setVoteEnabled(on) {
+  ["vote-a", "vote-b", "vote-tie", "vote-bad"].forEach((id) => $(id).disabled = !on);
+}
+
+function append(side, text) {
+  const out = $("out-" + side);
+  const cursor = out.querySelector(".cursor");
+  if (cursor) cursor.remove();
+  out.appendChild(document.createTextNode(text));
+  out.insertAdjacentHTML("beforeend", '<span class="cursor">▌</span>');
+}
+
+async function startBattle() {
+  if (running) return;
+  resetArena();
+  running = true;
+  $("go").disabled = true; $("stop").disabled = false;
+  $("arena").style.display = "grid";
+  $("vote-panel").style.display = "block";
+  $("status").textContent = "generating…";
+  const t0 = performance.now();
+  const counters = { a: 0, b: 0 };
+  const done = { a: false, b: false };
+
+  controller = new AbortController();
+  const forced = $("pairing").value !== "random" ? { model_a: $("pairing").value } : {};
+  try {
+    const res = await fetch("/api/battle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: $("prompt").value,
+        max_tokens: Number($("max").value),
+        temperature: Number($("temp").value),
+        ...forced,
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok || !res.body) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || ("HTTP " + res.status));
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { value, done: finished } = await reader.read();
+      if (finished) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop();
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (payload === "[DONE]") continue;
+        let ev; try { ev = JSON.parse(payload); } catch { continue; }
+        if (ev.type === "start") { battleId = ev.battle_id; }
+        else if (ev.type === "chunk") { append(ev.side, ev.text); counters[ev.side] += ev.text.length; }
+        else if (ev.type === "error") { append(ev.side, "\n[error: " + ev.message + "]"); }
+        else if (ev.type === "done") {
+          done[ev.side] = true;
+          const cursor = $("out-" + ev.side).querySelector(".cursor");
+          if (cursor) cursor.remove();
+          const secs = (performance.now() - t0) / 1000;
+          $("meta-" + ev.side).textContent =
+            `${counters[ev.side]} chars · ~${(counters[ev.side] / 4 / Math.max(secs, .01)).toFixed(0)} tok/s`;
+        } else if (ev.type === "end") {
+          $("status").textContent = "battle finished in " + ev.seconds + "s";
+        }
+      }
+      if (done.a && done.b) { setVoteEnabled(true); $("vote-status").textContent = "cast your vote"; }
+    }
+  } catch (err) {
+    if (err.name !== "AbortError") append("a", "\n[error: " + err.message + "]");
+    $("status").textContent = "battle failed";
+  } finally {
+    running = false;
+    $("go").disabled = false; $("stop").disabled = true;
+    controller = null;
+    if (done.a && done.b) setVoteEnabled(true);
+  }
+}
+
+async function vote(choice) {
+  if (!battleId || voted) return;
+  setVoteEnabled(false);
+  $("vote-status").textContent = "recording…";
+  try {
+    const res = await fetch("/api/vote", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ battle_id: battleId, winner: choice }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message || "vote failed");
+    voted = true;
+    $("who-a").textContent = data.a.name; $("who-a").className = "who revealed";
+    $("who-b").textContent = data.b.name; $("who-b").className = "who revealed";
+    const cell = (m) => `<b>${m.name}</b> ${m.elo_before} → ${m.elo_after}
+      <span class="${m.delta >= 0 ? "up" : "down"}">(${m.delta >= 0 ? "+" : ""}${m.delta})</span>`;
+    $("reveal").innerHTML = `
+      <div class="reveal">
+        <h3>${choice === "both_bad" ? "Both bad — recorded, not rated"
+             : choice === "tie" ? "Tie" : (choice === "a" ? "A wins" : "B wins")}</h3>
+        <table>
+          <tr><th></th><th>model</th><th>Elo</th><th>record</th></tr>
+          <tr><td style="color:var(--a)">A</td><td>${cell(data.a)}</td>
+              <td></td><td class="ci">${data.a.wins}-${data.a.losses}-${data.a.ties}</td></tr>
+          <tr><td style="color:var(--b)">B</td><td>${cell(data.b)}</td>
+              <td></td><td class="ci">${data.b.wins}-${data.b.losses}-${data.b.ties}</td></tr>
+        </table>
+        <div class="row" style="margin-top:12px">
+          <button id="again">New battle</button>
+          <a href="/leaderboard"><button class="ghost" type="button">See leaderboard</button></a>
+        </div>
+      </div>`;
+    $("vote-status").textContent = data.rated ? "rated" : "not rated";
+    $("again").addEventListener("click", () => {
+      const next = PROMPTS[Math.floor(Math.random() * PROMPTS.length)];
+      $("prompt").value = next; resetArena(); $("arena").style.display = "none";
+      $("vote-panel").style.display = "none";
+      startBattle();
+    });
+    loadState();
+  } catch (err) {
+    $("vote-status").textContent = "error: " + err.message;
+    setVoteEnabled(true);
+  }
+}
+
+$("go").addEventListener("click", startBattle);
+$("stop").addEventListener("click", () => controller && controller.abort());
+$("randomize").addEventListener("click", () => {
+  $("prompt").value = PROMPTS[Math.floor(Math.random() * PROMPTS.length)];
+  $("prompt-hint").textContent = "random prompt loaded";
+});
+const VOTE_BUTTONS = { "vote-a": "a", "vote-b": "b", "vote-tie": "tie",
+                      "vote-bad": "both_bad" };
+Object.entries(VOTE_BUTTONS).forEach(([id, choice]) =>
+  $(id).addEventListener("click", () => vote(choice)));
+$("prompt").addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") startBattle();
+});
+
+/* --- PWA: installable, works from the home screen, no network needed once loaded --- */
+/* No service worker here on purpose: this app needs the model server to be
+   useful, so a cached shell buys nothing and a stale cache can serve a broken
+   page. The genuinely offline app is phone/LlamaPhone.html. */
+
+loadState();
+</script>
+</body>
+</html>

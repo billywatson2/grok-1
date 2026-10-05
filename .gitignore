@@ -1,2 +1,29 @@
 checkpoints/*
 !checkpoints/README.md
+
+# local_llama: models and third-party builds are fetched locally, never committed
+local_llama/models/
+local_llama/llama.cpp/
+local_llama/**/__pycache__/
+
+# lm_arena: local ratings database and server logs
+lm_arena/arena.db
+lm_arena/arena.db-wal
+lm_arena/arena.db-shm
+lm_arena/llama-server-*.log
+lm_arena/**/__pycache__/
+
+# phone app: regenerable build artifacts (tools/build_phone_app.py)
+phone/LlamaPhone.html
+phone/LlamaPhone.llm
+phone/**/__pycache__/
+
+# python cache
+__pycache__/
+
+# phone app lite build
+phone/LlamaPhoneLite.html
+
+# secrets: never commit this
+.env
+node_modules/

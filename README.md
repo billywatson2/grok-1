@@ -18,6 +18,22 @@ The script loads the checkpoint and samples from the model on a test input.
 Due to the large size of the model (314B parameters), a machine with enough GPU memory is required to test the model with the example code.
 The implementation of the MoE layer in this repository is not efficient. The implementation was chosen to avoid the need for custom kernels to validate the correctness of the model.
 
+# TypeScript quickstart (index.ts)
+
+`index.ts` is a small, self-contained example of running Python inside an [E2B](https://e2b.dev)
+sandbox — create a sandbox, run a cell, list the files, clean up:
+
+```shell
+npm install
+npx tsx ./index.ts        # or: npm start
+npm run typecheck         # tsc --noEmit: type-checks rather than just stripping types
+npm test                  # runs index.ts against a stub sandbox, offline
+```
+
+It needs `E2B_API_KEY` in the environment or in a gitignored `.env` (see
+`.env.example`), and outbound access to `api.e2b.app`. The `--local` paths and
+the Groq equivalent live in `examples/` and need no E2B account.
+
 # Model Specifications
 
 Grok-1 is currently designed with the following specifications:

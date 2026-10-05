@@ -1,0 +1,4 @@
+# For examples/ only -- the Grok-1 model itself needs none of this.
+#   pip install -r examples/requirements.txt
+groq>=1.7.0
+e2b-code-interpreter>=2.10.0
