@@ -1,2 +1,7 @@
 checkpoints/*
 !checkpoints/README.md
+
+# local_llama: models and third-party builds are fetched locally, never committed
+local_llama/models/
+local_llama/llama.cpp/
+local_llama/**/__pycache__/
