@@ -211,7 +211,7 @@ def main() -> int:
 
     # 5. execution via the injected sandbox --------------------------------- #
     print("\nexecution (sandbox injected: we check what we send and read back)")
-    ex = FakeExecution(results=[FakeResult("55")], logs=FakeLogs(stdout="55\n"))
+    ex = FakeExecution(results=[FakeResult("45")], logs=FakeLogs(stdout="45\n"))
     made: list[FakeSandbox] = []
     out = ci.execute_code("print(sum(range(10)))", timeout=99,
                           sandbox_factory=sandbox_factory(ex, made))
@@ -220,8 +220,8 @@ def main() -> int:
     results.append(check("no template key unless asked", "template" in made[0].kwargs, False))
     results.append(check("sandbox was closed", made[0].closed, True))
     results.append(check("reports ok", out["ok"], True))
-    results.append(check("reads the last result", out["result"], "55"))
-    results.append(check("reads stdout", out["stdout"], "55\n"))
+    results.append(check("reads the last result", out["result"], "45"))
+    results.append(check("reads stdout", out["stdout"], "45\n"))
 
     made.clear()
     out = ci.execute_code("x", template="my-template",
@@ -244,7 +244,7 @@ def main() -> int:
     os.environ["GROQ_BASE_URL"] = base
     real_execute = ci.execute_code
     made.clear()
-    ex_ok = FakeExecution(results=[FakeResult("55")], logs=FakeLogs())
+    ex_ok = FakeExecution(results=[FakeResult("45")], logs=FakeLogs())
     # note: the helper is bound to another name on purpose -- a lambda parameter
     # called sandbox_factory would shadow this function and call None
     fake_sandboxes = sandbox_factory(ex_ok, made)
@@ -253,19 +253,80 @@ def main() -> int:
     try:
         code, out = run_cli([])
         results.append(check("exit code 0", code, 0))
-        results.append(check("prints the result", out.strip().endswith("Result: 55"), True))
+        results.append(check("prints the result", out.strip().endswith("Result: 45"), True))
         results.append(check("ran the extracted code, not the fence",
                              made[0].ran, ["print(sum(range(10)))"]))
         code, out = run_cli(["--json"])
         payload = json.loads(out)
         results.append(check("json carries code+result",
                              (payload["code"], payload["result"]),
-                             ("print(sum(range(10)))", "55")))
+                             ("print(sum(range(10)))", "45")))
         code, out = run_cli(["--show-code"])
         results.append(check("--show-code prints the code", "generated code:" in out, True))
     finally:
         ci.execute_code = real_execute
         for k in ("GROQ_API_KEY", "E2B_API_KEY", "GROQ_BASE_URL"):
+            os.environ.pop(k, None)
+
+    # 6b. local execution (no E2B, no key) ----------------------------------- #
+    print("\n--local runs the cell here, no E2B key required")
+    out = ci.execute_locally('word = "strawberry"\nprint(word.count("r"))')
+    results.append(check("print-only cell: ok", out["ok"], True))
+    results.append(check("print-only cell: last printed line is the result",
+                         out["result"], "3"))
+    results.append(check("stdout captured", out["stdout"].strip(), "3"))
+
+    out = ci.execute_locally("6 * 7")
+    results.append(check("trailing expression becomes the result", out["result"], "42"))
+
+    out = ci.execute_locally("x = 1\nprint(x)\nx + 1")
+    results.append(check("statements then expression", out["result"], "2"))
+
+    out = ci.execute_locally("raise ValueError('nope')")
+    results.append(check("a raise is a failed run, not a crash", out["ok"], False))
+    results.append(check("error name captured", out["error"]["name"], "ValueError"))
+    results.append(check("error value captured", out["error"]["value"], "nope"))
+
+    out = ci.execute_locally("import time; time.sleep(5)", timeout=1)
+    results.append(check("timeout is reported, not hung", out["ok"], False))
+    results.append(check("timeout names itself", out["error"]["name"], "Timeout"))
+
+    # 6c. a print-only cell on the E2B path has no notebook result ----------- #
+    # Regression: execution.results is empty for a print-only cell, so the CLI
+    # announced "Result: None" on the exact example in the docs.
+    print("\nprint-only cell via the E2B path falls back to stdout")
+    ci.execute_code = lambda code, template=None, timeout=120, sandbox_factory=None: {
+        "ok": True, "result": None, "results": [], "stdout": "3\n", "stderr": "",
+        "error": None}
+    try:
+        os.environ["GROQ_API_KEY"] = KEY
+        os.environ["E2B_API_KEY"] = "e2b_test_key_not_real"
+        os.environ["GROQ_BASE_URL"] = base
+        code, out = run_cli([])
+        results.append(check("exit code 0", code, 0))
+        results.append(check("prints the printed value", "Result: 3" in out, True))
+        results.append(check("never says None", "None" in out, False))
+        results.append(check("does not duplicate the stdout block",
+                             out.count("3"), 1))
+    finally:
+        ci.execute_code = real_execute
+        for k in ("GROQ_API_KEY", "E2B_API_KEY", "GROQ_BASE_URL"):
+            os.environ.pop(k, None)
+
+    # 6d. --local needs only the Groq key ------------------------------------ #
+    print("\n--local does not demand an E2B key")
+    os.environ["GROQ_API_KEY"] = KEY
+    os.environ["GROQ_BASE_URL"] = base
+    try:
+        code, out = run_cli(["--local", "--json"])
+        payload = json.loads(out)
+        results.append(check("exit code 0 without E2B_API_KEY", code, 0))
+        results.append(check("reports it ran here", payload["ran_on"], "local"))
+        # 45 is sum(range(10)) -- the real execution caught that the stub's
+        # hardcoded 55 was simply the wrong answer
+        results.append(check("really ran the extracted code", payload["result"], "45"))
+    finally:
+        for k in ("GROQ_API_KEY", "GROQ_BASE_URL"):
             os.environ.pop(k, None)
 
     # 7. missing E2B key is reported before the model is called -------------- #

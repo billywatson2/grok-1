@@ -156,6 +156,63 @@ def execute_code(code: str, template: str | None = None, timeout: int = 120,
     }
 
 
+# Runs the cell the way a notebook does: a trailing expression becomes the
+# result, everything before it just executes.
+_LOCAL_RUNNER = r"""
+import ast, sys
+
+src = sys.stdin.read()
+tree = ast.parse(src)
+last = tree.body[-1] if tree.body else None
+expr = last if isinstance(last, ast.Expr) else None
+head = tree.body[:-1] if expr is not None else tree.body
+
+g = {"__name__": "__main__"}
+if head:
+    exec(compile(ast.Module(body=head, type_ignores=[]), "<cell>", "exec"), g)
+if expr is not None:
+    value = eval(compile(ast.Expression(body=expr.value), "<cell>", "eval"), g)
+    if value is not None:
+        print(repr(value))
+"""
+
+
+def execute_locally(code: str, timeout: int = 120) -> dict:
+    """Run the code on this machine, in a fresh subprocess.
+
+    This is a stand-in for E2B, not a sandbox: the code runs with your
+    permissions and can read your files and reach your network. Use it for
+    demos, for trusted prompts, or when you have no E2B key -- not for code
+    written by a model you would not run by hand.
+    """
+    import subprocess
+
+    try:
+        proc = subprocess.run([sys.executable, "-c", _LOCAL_RUNNER], input=code,
+                              capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "result": None, "results": [], "stdout": "", "stderr": "",
+                "error": {"name": "Timeout", "value": f"nothing finished within "
+                                                      f"{timeout}s", "traceback": ""}}
+
+    stdout = proc.stdout or ""
+    # what a reader takes away: the last thing the cell printed
+    lines = [ln for ln in stdout.splitlines() if ln.strip()]
+    stderr = proc.stderr or ""
+    if proc.returncode == 0:
+        return {"ok": True, "result": lines[-1] if lines else None, "results": lines,
+                "stdout": stdout, "stderr": stderr, "error": None}
+
+    tail = [ln for ln in stderr.strip().splitlines() if ln.strip()]
+    name, value = "Error", (tail[-1] if tail else "the code failed")
+    if tail and ":" in tail[-1] and not tail[-1].startswith(" "):
+        name, _, value = tail[-1].partition(":")
+        name, value = name.strip(), value.strip()
+    return {"ok": False, "result": None, "results": [], "stdout": stdout,
+            "stderr": stderr,
+            "error": {"name": name, "value": value, "traceback": stderr.strip()}}
+
+
 # --------------------------------------------------------------------------- #
 # cli
 def explain_api_error(exc: Exception) -> str:
@@ -190,6 +247,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="E2B template (default: the code-interpreter template)")
     ap.add_argument("--timeout", type=int, default=120,
                     help="sandbox lifetime in seconds (default: 120)")
+    ap.add_argument("--local", action="store_true",
+                    help="run the code on this machine instead of in E2B "
+                         "(no E2B key needed; the code is NOT sandboxed)")
     ap.add_argument("--show-code", action="store_true",
                     help="print the generated code before running it")
     ap.add_argument("--dry-run", action="store_true",
@@ -203,7 +263,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         plan = {
             "model": args.model,
-            "template": args.template or "(default code-interpreter template)",
+            "executes": "here (--local, unsandboxed)"
+                        if args.local else
+                        f"E2B sandbox {args.template or '(default template)'}",
             "timeout": args.timeout,
             "prompt": args.prompt,
             "groq_api_key": "set" if os.environ.get("GROQ_API_KEY") else "MISSING",
@@ -219,9 +281,10 @@ def main(argv: list[str] | None = None) -> int:
                   "  sandbox; nothing runs on this machine and nothing persists.")
         return 0
 
-    # both keys are required for a real run; check before spending a request
+    # check before spending a request; E2B only when the code goes to E2B
     require("GROQ_API_KEY", "https://console.groq.com/keys", "needed to write the code")
-    require("E2B_API_KEY", "https://e2b.dev/dashboard", "needed to run the code")
+    if not args.local:
+        require("E2B_API_KEY", "https://e2b.dev/dashboard", "needed to run the code")
 
     try:
         raw = generate_code(args.prompt, args.model)
@@ -242,25 +305,29 @@ def main(argv: list[str] | None = None) -> int:
         print()
 
     try:
-        out = execute_code(code, args.template, args.timeout)
+        out = (execute_locally(code, args.timeout) if args.local
+               else execute_code(code, args.template, args.timeout))
     except SystemExit:
         raise
     except Exception as exc:
         print(f"error: the sandbox failed to run the code.\n  {exc}", file=sys.stderr)
         return 4
 
-    out.update({"model": args.model, "prompt": args.prompt, "code": code})
+    out.update({"model": args.model, "prompt": args.prompt, "code": code,
+                "ran_on": "local" if args.local else "e2b"})
 
     if args.as_json:
         print(json.dumps(out, indent=2))
         return 0 if out["ok"] else 4
 
-    if out["stdout"].strip() and out["stdout"].strip() != (out["result"] or "").strip():
+    printed = [ln for ln in out["stdout"].splitlines() if ln.strip()]
+    final = out["result"] or (printed[-1] if printed else None)
+    if out["stdout"].strip() and out["stdout"].strip() != (final or ""):
         print("stdout:\n" + out["stdout"].rstrip())
     if out["stderr"].strip():
         print("stderr:\n" + out["stderr"].rstrip())
     if out["ok"]:
-        print(f"Result: {out['result']}")
+        print(f"Result: {final if final is not None else '(no output)'}")
     else:
         err = out["error"]
         print(f"the code raised {err['name']}: {err['value']}", file=sys.stderr)

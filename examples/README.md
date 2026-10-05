@@ -31,6 +31,7 @@ Result: 3
 
 | Flag | Effect |
 | --- | --- |
+| `--local` | Run the code on this machine instead of in E2B. No E2B key needed. **Not sandboxed** — see the warning below. |
 | `--dry-run` | Print the plan and exit. Needs no keys, calls nothing. |
 | `--show-code` | Print the generated code before running it. |
 | `--model ID` | Groq model id (default `openai/gpt-oss-120b`, or `$GROQ_MODEL`). |
@@ -40,6 +41,24 @@ Result: 3
 
 Exit codes: `0` success · `2` missing key or package · `3` the model call failed
 (for example a retired model id) · `4` the generated code raised.
+
+### Running it without E2B
+
+`--local` executes the generated code here, in a fresh Python subprocess, with no
+E2B account:
+
+```shell
+python examples/groq_code_interpreter.py --local "..."
+```
+
+**It is not a sandbox.** The code runs with your permissions and can read your
+files and use your network — exactly as if you had typed it into a shell. E2B is
+the safer default for model-written code precisely because the sandbox is
+disposable; use `--local` for demos, trusted prompts, or when you have no key.
+
+A cell that ends in `print(...)` has no notebook result, so the last printed line
+is reported as the result; a trailing expression is reported as its value, the
+way a notebook would show it.
 
 ## Keys
 
@@ -82,7 +101,7 @@ a traceback.
 ## Tests
 
 ```shell
-python3 examples/test_groq_code_interpreter.py     # 40 checks, all offline
+python3 examples/test_groq_code_interpreter.py     # 57 checks, all offline
 ```
 
 The Groq half runs the **real `groq` SDK** against a local mock of the API, so
@@ -90,3 +109,5 @@ the request shape, auth header and reply parsing are genuinely exercised. The
 E2B half is tested through an injected sandbox factory: that covers what we send
 to `run_code`, how results and errors are read back, and the timeout/template
 plumbing — but it cannot cover E2B's own service, which needs egress and a key.
+`--local` execution is tested by really executing code (raise and timeout paths
+included).
