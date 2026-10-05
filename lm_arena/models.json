@@ -20,6 +20,18 @@
         "ctx": 256,
         "threads": 2
       }
+    },
+    {
+      "_comment": "Cloud contestant, keyed from the environment. Shows up greyed out until $GROQ_API_KEY is set, and is skipped by battles while it is not ready. $GROQ_MODEL picks the model id; override base_url to point at any OpenAI-compatible host.",
+      "name": "groq-llama",
+      "kind": "openai",
+      "config": {
+        "base_url": "https://api.groq.com/openai/v1",
+        "model": "openai/gpt-oss-120b",
+        "model_env": "GROQ_MODEL",
+        "api": "chat",
+        "api_key_env": "GROQ_API_KEY"
+      }
     }
   ]
 }

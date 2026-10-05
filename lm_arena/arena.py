@@ -382,11 +382,25 @@ class RemoteModel:
         self.base = config["base_url"].rstrip("/")
         if not self.base.endswith("/v1"):
             self.base += "/v1"
-        self.model = config.get("model", name)
+        # the model id can come from the environment too, so one registry entry
+        # works for every model a provider offers: "model_env": "GROQ_MODEL"
+        model_env = config.get("model_env")
+        self.model = (os.environ.get(model_env) if model_env else None) \
+            or config.get("model", name)
         self.api = config.get("api", "chat")           # 'chat' | 'completions'
         self.api_key_env = config.get("api_key_env")
-        self.ready = True
-        self.error = None
+
+    # `ready` and `error` are read as *attributes* by the battle pairing (and by
+    # the UI), while info() reports the same thing to the client. They have to
+    # agree: a remote contestant whose key is missing must not be picked for a
+    # battle, or every other battle is wasted on a model that cannot answer.
+    @property
+    def ready(self) -> bool:
+        return True if not self.api_key_env else bool(os.environ.get(self.api_key_env))
+
+    @property
+    def error(self) -> str | None:
+        return None if self.ready else f"set ${self.api_key_env}"
 
     def start(self) -> None:  # nothing to start
         return
@@ -395,10 +409,8 @@ class RemoteModel:
         return
 
     def info(self) -> dict:
-        key = os.environ.get(self.api_key_env) if self.api_key_env else None
-        return {"name": self.name, "kind": "openai", "ready": bool(key or not self.api_key_env),
-                "error": None if (key or not self.api_key_env)
-                else f"set ${self.api_key_env}", "endpoint": self.base, "model": self.model}
+        return {"name": self.name, "kind": "openai", "ready": self.ready,
+                "error": self.error, "endpoint": self.base, "model": self.model}
 
     def stream(self, prompt: str, max_tokens: int, temperature: float, top_p: float,
                seed: int):
@@ -450,6 +462,26 @@ def openai_stream(base: str, api: str, model: str, prompt: str, max_tokens: int,
             if text:
                 yield text
 
+
+
+def load_env_file(path: Path | None = None) -> None:
+    """Read KEY=VALUE lines from a .env file into os.environ.
+
+    Existing environment variables always win, so `VAR=x python serve.py` still
+    overrides the file. Never logs values. Missing file is not an error -- the
+    file is a convenience for keeping keys out of your shell history.
+    """
+    path = path or (HERE.parent / ".env")
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip().strip("'\"")
+        if key and value and key not in os.environ:
+            os.environ[key] = value
 
 def build_model(row: dict):
     cfg = row["config"]
@@ -961,8 +993,15 @@ def _serve_ipv6_loopback(port: int, handler) -> None:
 
 
 def main() -> None:
+    # .env first: several defaults below (ARENA_TOKEN, GROQ_API_KEY) come from the
+    # environment, and the file is just a place to keep them out of your shell
+    # history. Real environment variables always win.
+    load_env_file()
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--env-file", default=None,
+                    help="load KEY=VALUE pairs from this file too (default: .env at "
+                         "the repo root, if present)")
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8100)))
     ap.add_argument("--db", type=Path, default=DEFAULT_DB)
@@ -972,6 +1011,9 @@ def main() -> None:
                     help="require this token for every route (also $ARENA_TOKEN). "
                          "Use it whenever the arena is reachable from other devices.")
     args = ap.parse_args()
+
+    if args.env_file:
+        load_env_file(Path(args.env_file))
 
     if args.reset and args.db.exists():
         args.db.unlink()

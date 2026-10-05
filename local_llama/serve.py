@@ -65,6 +65,26 @@ DOWNLOADS = {
 }
 
 
+def load_env_file(path: Path | None = None) -> None:
+    """Read KEY=VALUE lines from a .env file into os.environ.
+
+    Existing environment variables always win, so `VAR=x python serve.py` still
+    overrides the file. Never logs values. Missing file is not an error -- the
+    file is a convenience for keeping keys out of your shell history.
+    """
+    path = path or (HERE.parent / ".env")
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip().strip("'\"")
+        if key and value and key not in os.environ:
+            os.environ[key] = value
+
+
 # --------------------------------------------------------------------------- #
 # numpy backend
 # --------------------------------------------------------------------------- #
@@ -215,6 +235,15 @@ def _llama_server_flags() -> set[str]:
 
 
 def pick_backend(args) -> object:
+    if args.backend == "groq":
+        from groq_backend import GroqBackend, MissingKey
+
+        backend = GroqBackend(model=getattr(args, "groq_model", None))
+        try:
+            backend.require_key()   # refuse to boot rather than fail per request
+        except MissingKey as exc:
+            raise SystemExit(f"[serve] {exc}") from exc
+        return backend
     if args.backend in ("auto", "llamacpp") and LLAMA_SERVER_BIN.exists() and args.gguf.exists():
         try:
             return LlamaCppBackend(args.gguf, args.llama_port, args.ctx, args.threads)
@@ -508,7 +537,16 @@ def main() -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8000)))
-    ap.add_argument("--backend", choices=("auto", "llamacpp", "numpy"), default="auto")
+    ap.add_argument("--backend", choices=("auto", "llamacpp", "numpy", "groq"),
+                    default="auto",
+                    help="groq sends prompts to api.groq.com (needs GROQ_API_KEY); "
+                         "auto never picks it")
+    ap.add_argument("--env-file", default=None,
+                    help="load KEY=VALUE pairs from this file (default: .env at "
+                         "the repo root, if present)")
+    ap.add_argument("--groq-model", default=None,
+                    help="model id for --backend groq (default $GROQ_MODEL or "
+                         "openai/gpt-oss-120b)")
     ap.add_argument("--model", type=Path, default=DEFAULT_BIN)
     ap.add_argument("--gguf", type=Path, default=DEFAULT_GGUF)
     ap.add_argument("--tokenizer", type=Path, default=DEFAULT_TOKENIZER)
@@ -518,6 +556,7 @@ def main() -> None:
     ap.add_argument("--threads", type=int, default=os.cpu_count() or 2)
     args = ap.parse_args()
 
+    load_env_file(Path(args.env_file) if args.env_file else None)
     backend = pick_backend(args)
     Handler.backend = backend
     info = backend.info()

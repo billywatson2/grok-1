@@ -69,6 +69,31 @@ Seeded from `models.json` on first run:
 |---|---|---|
 | `stories15M` | Llama-2 architecture, 15M params, 32k SentencePiece vocab, TinyStories | 512 |
 | `stories15M-tok4096` | same recipe, retrained with a 4096-token BPE vocab | 256 |
+| `groq-llama` | cloud contestant: `openai/gpt-oss-120b` on Groq, if `$GROQ_API_KEY` is set | provider |
+
+`groq-llama` is registered from `models.json` but is **not ready without a key**:
+`/health` reports it with `"error": "set $GROQ_API_KEY"`, and the battle pairing
+skips it, so the arena keeps working exactly as before. Set the key where the
+arena runs and it joins the rotation:
+
+```bash
+export GROQ_API_KEY=gsk_...       # https://console.groq.com/keys
+export GROQ_MODEL=openai/gpt-oss-20b   # optional; $GROQ_MODEL overrides the JSON
+python arena.py
+```
+
+Groq retires model ids on a schedule — `llama-3.1-8b-instant` and
+`llama-3.3-70b-versatile` both went away on 2026-08-16 — so if a battle reports
+the model as missing, list what your key can use:
+
+```bash
+curl -s -H "Authorization: Bearer $GROQ_API_KEY" \
+  https://api.groq.com/openai/v1/models | grep -o '"id": *"[^"]*"'
+```
+
+Keys live in the environment (or in a gitignored `.env` at the repo root; see
+`.env.example`). `python3 tools/check_keys.py` reports what is configured
+without printing any value.
 
 Two real checkpoints with different tokenizers, so the same prompt produces
 genuinely different stories — a fair fight for a preference vote. Both are tiny
@@ -94,7 +119,8 @@ curl -X POST http://localhost:8100/api/models -H 'Content-Type: application/json
 
 For a hosted endpoint, point `api_key_env` at the *name* of an environment
 variable; the arena reads the key from your environment at request time and never
-stores it:
+stores it. `model_env` does the same for the model id, so one registry entry
+covers every model a provider offers:
 
 ```bash
 export OPENROUTER_API_KEY=sk-or-...

@@ -19,7 +19,10 @@ phone/LlamaPhone.llm
 phone/**/__pycache__/
 
 # python cache
-tools/__pycache__/
+__pycache__/
 
 # phone app lite build
 phone/LlamaPhoneLite.html
+
+# secrets: never commit this
+.env
