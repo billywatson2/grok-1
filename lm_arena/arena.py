@@ -686,6 +686,9 @@ class Handler(BaseHTTPRequestHandler):
             self._file(STATIC / "index.html", "text/html; charset=utf-8")
         elif route == "/leaderboard":
             self._file(STATIC / "leaderboard.html", "text/html; charset=utf-8")
+        elif route == "/phone":
+            # landing page for getting the apps onto a phone; contains QR codes
+            self._file(PHONE_DIR / "iphone.html", "text/html; charset=utf-8")
         elif route == "/manifest.webmanifest":
             self._file(STATIC / "manifest.webmanifest", "application/manifest+json")
         elif route == "/sw.js":

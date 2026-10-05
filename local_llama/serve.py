@@ -334,6 +334,9 @@ class Handler(BaseHTTPRequestHandler):
         route = self.path.split("?")[0]
         if route in ("/", "/index.html"):
             self._file(WEB_DIR / "index.html", "text/html; charset=utf-8")
+        elif route == "/phone":
+            # landing page for getting the apps onto a phone; contains QR codes
+            self._file(PHONE_DIR / "iphone.html", "text/html; charset=utf-8")
         elif route == "/manifest.webmanifest":
             self._file(WEB_DIR / "manifest.webmanifest", "application/manifest+json")
         elif route == "/sw.js":
