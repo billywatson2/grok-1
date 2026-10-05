@@ -242,6 +242,12 @@ class Handler(BaseHTTPRequestHandler):
             super().log_message(fmt, *args)
 
     # ---- helpers ---------------------------------------------------------- #
+    def _write_body(self, body: bytes) -> None:
+        """HEAD must send the same headers as GET but no body."""
+        if getattr(self, "_head_only", False):
+            return
+        self.wfile.write(body)
+
     def _json(self, payload: dict, status: int = 200) -> None:
         body = json.dumps(payload).encode()
         self.send_response(status)
@@ -249,7 +255,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
-        self.wfile.write(body)
+        self._write_body(body)
 
     def _file(self, path: Path, content_type: str) -> None:
         if not path.exists() or not path.is_file():
@@ -262,7 +268,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.suffix in (".png", ".webmanifest", ".js", ".css"):
             self.send_header("Cache-Control", "public, max-age=300")
         self.end_headers()
-        self.wfile.write(body)
+        self._write_body(body)
 
     def _static(self, relative: str) -> None:
         """Serve a file from web/ without ever escaping it (path traversal)."""
@@ -286,7 +292,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
         self.end_headers()
-        self.wfile.write(body)
+        self._write_body(body)
 
     def _sse_start(self) -> None:
         self.send_response(200)
@@ -311,6 +317,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
         self.end_headers()
+
+    def do_HEAD(self):  # noqa: N802
+        """Preview proxies probe with HEAD; BaseHTTPRequestHandler would 501."""
+        self._head_only = True
+        try:
+            self.do_GET()
+        finally:
+            self._head_only = False
 
     def do_GET(self):  # noqa: N802
         route = self.path.split("?")[0]
