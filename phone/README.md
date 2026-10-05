@@ -1,5 +1,63 @@
 # Running it on your phone (no computer, no WiFi)
 
+Two ways to do this, depending on how much you want to install:
+
+| | **Single-file app** (easiest) | **Termux apparatus** |
+|---|---|---|
+| Setup | copy one file to the phone | install Termux + run a script |
+| Runs | in your normal browser, in airplane mode | a local server on the phone |
+| Model | stories15M, int8 (15 MB, baked in) | stories15M + any GGUF you add |
+| Extras | none | arena, voting, leaderboard, OpenAI API |
+| Start at | [Single-file app](#the-single-file-app-no-install) | [Android — exact steps](#android--exact-steps) |
+
+## The single-file app (no install)
+
+`phone/LlamaPhone.html` is the whole thing — a Llama model, its tokenizer and the
+inference engine in one 21 MB HTML file. Copy it to the phone (USB, email, cloud,
+messaging yourself), tap it, and it opens in Chrome. Turn on airplane mode and it
+keeps working: there is no server, no install, and it never opens a socket.
+
+```bash
+# build it from a checkout (needs the checkpoint: local_llama/download_model.sh)
+python3 tools/build_phone_app.py
+#   -> phone/LlamaPhone.html   21.1 MB, self-contained
+#   -> phone/LlamaPhone.llm    15.4 MB, the raw quantised container
+```
+
+You can also build it **on the phone** in Termux after `termux_setup.sh`, since
+that already fetches the checkpoint:
+
+```bash
+cd ~/grok-1 && python3 tools/build_phone_app.py
+```
+
+Then open `file:///sdcard/Download/LlamaPhone.html` (or wherever you copied it).
+
+### What is actually in it
+
+* **Model**: stories15M — the same Llama-2 architecture checkpoint the rest of
+  this repo uses — quantised to int8 with one scale per row: 15.4 MB instead of
+  60.8 MB. Measured against the full-precision model over 80 teacher-forced
+  steps: mean |Δlogit| 0.066, max 0.37, **top-1 agreement 100%**. Turning the
+  dial to 4-bit halves the file again (7.8 MB) but drops agreement to 74% *and*
+  runs ~3× slower in JavaScript, so int8 is the default for good reason.
+* **Engine**: `phone/web/llama-engine.js` — plain JavaScript, no WebAssembly, no
+  build toolchain. It mirrors `local_llama/np_llama.py` operation for operation.
+* **Proof it is correct**: `node phone/test_engine.js phone/LlamaPhone.llm
+  "Once upon a time" 24` prints greedy token ids that match the Python reference
+  **exactly** (both engines produce `29892,727,471,263,2217,...`). If you change
+  the engine, re-run that before trusting it.
+
+### Speed
+
+Roughly 50 tok/s per core in Node on this machine. A phone browser is slower —
+expect a handful of tokens per second to a few tens, which is fine for stories
+and is the honest cost of having no server at all.
+
+---
+
+# The Termux apparatus
+
 The arena and the playground run **on the phone itself**. The models are 60 MB
 and 33 MB, so a phone that is a few years old handles them easily; you do not
 need a laptop, and after setup nothing touches the network — the server listens
@@ -124,6 +182,15 @@ delete contestants through the API. Options, cheapest first:
 * **Cloudflare Tunnel / ngrok:** `cloudflared tunnel --url http://localhost:8100`
   publishes it to a random public HTTPS URL. Convenient, but public — the token is
   not optional here.
+
+## Which path should you pick?
+
+* Want to read stories on a plane or in a tunnel, with nothing installed? →
+  **single-file app**.
+* Want the A/B arena, voting, an Elo leaderboard, bigger GGUF models, or an
+  OpenAI-compatible endpoint for other apps? → **Termux**.
+
+Both are fully offline and neither needs a computer while you use them.
 
 ## Notes and caveats
 

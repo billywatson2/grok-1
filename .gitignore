@@ -12,3 +12,11 @@ lm_arena/arena.db-wal
 lm_arena/arena.db-shm
 lm_arena/llama-server-*.log
 lm_arena/**/__pycache__/
+
+# phone app: regenerable build artifacts (tools/build_phone_app.py)
+phone/LlamaPhone.html
+phone/LlamaPhone.llm
+phone/**/__pycache__/
+
+# python cache
+tools/__pycache__/
