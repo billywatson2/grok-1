@@ -164,15 +164,17 @@ def build_container(bin_path: Path, quant: str) -> tuple[bytes, dict]:
 
 
 def build_html(container: bytes, tokenizer: bytes, stats: dict, out_path: Path,
-               engine_js: str, template: str) -> None:
+               engine_js: str, template: str, embedded: bool = True) -> None:
+    """`embedded=False` builds the lite page: no model inside, pick a .llm file."""
     def b64(data: bytes) -> str:
         return base64.b64encode(data).decode("ascii")
 
     html = template
     html = html.replace("/*__ENGINE__*/", engine_js)
-    html = html.replace("__MODEL_B64__", b64(container))
+    html = html.replace("__MODEL_B64__", b64(container) if embedded else "")
     html = html.replace("__TOKENIZER_B64__", b64(tokenizer))
     html = html.replace("__STATS__", json.dumps({
+        "embedded": embedded,
         "dim": stats["dim"], "layers": stats["layers"], "heads": stats["heads"],
         "vocab": stats["vocab"], "quant": stats["quant"],
         "params": stats["params"], "mb": round(len(container) / 1e6, 1),
@@ -206,13 +208,24 @@ def main() -> None:
     print(f"  wrote      : {llm_path}")
 
     if not args.no_html:
-        html = build_html(container, args.tokenizer.read_bytes(), stats, args.out,
-                          ENGINE.read_text(), TEMPLATE.read_text())
-        size = args.out.stat().st_size
-        print(f"  wrote      : {args.out} ({size / 1e6:.1f} MB, self-contained)")
+        tokenizer_bytes = args.tokenizer.read_bytes()
+        engine_js, template = ENGINE.read_text(), TEMPLATE.read_text()
+
+        build_html(container, tokenizer_bytes, stats, args.out, engine_js, template,
+                   embedded=True)
+        print(f"  wrote      : {args.out} ({args.out.stat().st_size / 1e6:.1f} MB, "
+              f"self-contained)")
+
+        lite_path = args.out.with_name(args.out.stem + "Lite.html")
+        build_html(b"", tokenizer_bytes, stats, lite_path, engine_js, template,
+                   embedded=False)
+        print(f"  wrote      : {lite_path} ({lite_path.stat().st_size / 1e6:.2f} MB, "
+              f"loads a .llm file)")
         print()
-        print("  Copy that one file to the phone (USB, email, cloud, anything) and")
-        print("  open it in Chrome. It runs in airplane mode.")
+        print("  Two ways onto the phone -- both work offline afterwards:")
+        print(f"    1. carry {args.out.name} alone (big, nothing else needed)")
+        print(f"    2. carry {lite_path.name} + {llm_path.name} (small page, "
+              f"pick the file once)")
 
 
 if __name__ == "__main__":

@@ -20,3 +20,6 @@ phone/**/__pycache__/
 
 # python cache
 tools/__pycache__/
+
+# phone app lite build
+phone/LlamaPhoneLite.html

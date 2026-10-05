@@ -9,8 +9,11 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <!--
-  Self-contained: model, tokenizer and engine are all inline below.
-  No server, no fetch, no network. Built by tools/build_phone_app.py.
+  Two build modes, same UI and same engine:
+    embedded : the model is inline in this page (one big file, nothing else to carry)
+    lite     : the model is loaded from a .llm file the user picks (page is <1 MB)
+
+  Built by tools/build_phone_app.py. No server, no fetch, no network.
 -->
 <style>
   :root {
@@ -46,6 +49,11 @@
   }
   textarea:focus { outline: none; border-color: var(--accent); }
   input[type=range] { width: 100%; height: 34px; accent-color: var(--accent); }
+  input[type=file] {
+    width: 100%; font: inherit; font-size: 15px; color: var(--dim);
+    background: var(--bg); border: 1px dashed var(--line); border-radius: 9px;
+    padding: 14px 12px; min-height: 52px;
+  }
   .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 6px; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
   button {
@@ -77,7 +85,10 @@
           border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px;
           cursor: pointer; touch-action: manipulation; }
   .chip:active { border-color: var(--accent); color: var(--accent); }
+  code { background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px;
+         padding: 1px 6px; font-size: 12.5px; }
   footer { color: var(--dim); font-size: 12px; text-align: center; margin-top: 18px; }
+  .err { color: #ffb4a2; }
   @media (prefers-reduced-motion: reduce) { .cursor, .boot .bar i { animation: none; } }
 </style>
 </head>
@@ -89,6 +100,16 @@
     A real Llama model running inside this browser tab. No server, no account, no
     network — it keeps working in airplane mode.
   </p>
+
+  <div class="panel" id="loader" hidden>
+    <label for="model-file">Load a model</label>
+    <p class="sub" style="margin:0 0 10px">
+      Pick the <code>LlamaPhone.llm</code> file you copied to this phone. It is read
+      locally and never uploaded. You only have to do this once per visit.
+    </p>
+    <input type="file" id="model-file" />
+    <div class="stats" id="loader-status"></div>
+  </div>
 
   <div class="panel">
     <label for="prompt">Story beginning</label>
@@ -119,17 +140,17 @@
   </div>
 
   <footer>
-    stories15M · int8 · runs offline · <span id="foot-backend"></span>
+    stories15M · runs offline · <span id="foot-backend"></span>
   </footer>
 </div>
 
 <div class="wrap boot" id="boot">
   <h1>Llama in your pocket</h1>
-  <p class="sub" id="boot-msg">Unpacking the model…</p>
+  <p class="sub" id="boot-msg">Starting…</p>
   <div class="bar"><i></i></div>
 </div>
 
-<!-- model + tokenizer are inert text; base64 has no markup characters -->
+<!-- lite builds leave the model script empty and ask for a file instead -->
 <script id="llama-model" type="text/plain">__MODEL_B64__</script>
 <script id="llama-tokenizer" type="text/plain">__TOKENIZER_B64__</script>
 <script id="llama-stats" type="application/json">__STATS__</script>
@@ -141,10 +162,11 @@
 <script>
 (function () {
   "use strict";
-  var stats = JSON.parse(document.getElementById("llama-stats").textContent);
-  var model = null, tokenizer = null, state = null, busy = false, cancel = false;
+  var CONFIG = JSON.parse(document.getElementById("llama-stats").textContent);
+  var model = null, tokenizer = null, busy = false, cancel = false;
 
   var $ = function (id) { return document.getElementById(id); };
+  var QUANT_LABEL = { 0: "fp32", 1: "int8", 3: "int4" };
   var PROMPTS = [
     "Once upon a time, a small robot who",
     "The little dragon could not fly, so",
@@ -153,46 +175,82 @@
     "The old lighthouse keeper heard a knock",
   ];
 
-  /* Warm the page first, then unpack the model on the next frame so the user
-     sees the loading state instead of a frozen white screen. */
-  setTimeout(function () {
-    requestAnimationFrame(function () {
-      try {
-        $("boot-msg").textContent = "Unpacking weights (" + stats.mb + " MB)…";
-        setTimeout(function () {
-          var t0 = performance.now();
-          var modelBytes = LlamaEngine.bytesFromBase64(
-            $("llama-model").textContent.trim());
-          model = new LlamaEngine.Llama(modelBytes.buffer);
-          tokenizer = new LlamaEngine.Tokenizer(
-            LlamaEngine.bytesFromBase64($("llama-tokenizer").textContent.trim()).buffer);
-          var secs = ((performance.now() - t0) / 1000).toFixed(1);
+  function b64ToBuffer(text) {
+    return LlamaEngine.bytesFromBase64(text.trim()).buffer;
+  }
 
-          $("boot").hidden = true;
-          $("app").hidden = false;
-          $("badges").innerHTML =
-            '<span class="badge">model: <b>stories15M</b></span>' +
-            '<span class="badge">' + (stats.params / 1e6).toFixed(1) + 'M params</span>' +
-            '<span class="badge">' + stats.layers + ' layers</span>' +
-            '<span class="badge">int8</span>' +
-            '<span class="badge">loaded in ' + secs + 's</span>';
-          $("foot-backend").textContent = "loaded in " + secs + "s";
-          $("chips").innerHTML = PROMPTS.map(function (p) {
-            return '<span class="chip" data-p="' + p.replace(/"/g, "&quot;") + '">'
-                 + p + "…</span>";
-          }).join("");
-          Array.prototype.forEach.call($("chips").children, function (chip) {
-            chip.addEventListener("click", function () {
-              $("prompt").value = chip.getAttribute("data-p");
-            });
+  function nextFrame() {
+    return new Promise(function (resolve) { setTimeout(resolve, 0); });
+  }
+
+  /* Everything that needs a loaded model lives here, so both build modes share
+     exactly one path to the UI. */
+  function modelReady(startedAt) {
+    var secs = ((performance.now() - startedAt) / 1000).toFixed(1);
+    $("boot").hidden = true;
+    $("loader").hidden = true;
+    $("app").hidden = false;
+    $("badges").innerHTML =
+      '<span class="badge">model: <b>' + model.nLayers + "L/" + model.dim + "d</b></span>" +
+      '<span class="badge">vocab <b>' + model.vocabSize.toLocaleString() + "</b></span>" +
+      '<span class="badge"><b>' + (QUANT_LABEL[model.quant] || model.quant) + "</b></span>" +
+      '<span class="badge">loaded in <b>' + secs + "s</b></span>";
+    $("foot-backend").textContent = "loaded in " + secs + "s";
+
+    if (!$("chips").children.length) {
+      $("chips").innerHTML = PROMPTS.map(function (p) {
+        return '<span class="chip" data-p="' + p.replace(/"/g, "&quot;") + '">' + p + "…</span>";
+      }).join("");
+      Array.prototype.forEach.call($("chips").children, function (chip) {
+        chip.addEventListener("click", function () {
+          $("prompt").value = chip.getAttribute("data-p");
+        });
+      });
+    }
+    $("stats").textContent = "ready";
+  }
+
+  function loadTokenizer() {
+    tokenizer = new LlamaEngine.Tokenizer(b64ToBuffer($("llama-tokenizer").textContent));
+  }
+
+  function boot() {
+    try {
+      loadTokenizer();
+      if (CONFIG.embedded) {
+        $("boot-msg").textContent = "Unpacking weights (" + CONFIG.mb + " MB)…";
+        var t0 = performance.now();
+        model = new LlamaEngine.Llama(b64ToBuffer($("llama-model").textContent));
+        modelReady(t0);
+      } else {
+        // lite build: show the picker and wait
+        $("boot").hidden = true;
+        $("app").hidden = false;
+        $("loader").hidden = false;
+        $("stats").textContent = "waiting for a model file";
+        $("model-file").addEventListener("change", function (event) {
+          var file = event.target.files && event.target.files[0];
+          if (!file) return;
+          $("loader-status").className = "stats";
+          $("loader-status").textContent =
+            "reading " + (file.size / 1e6).toFixed(1) + " MB…";
+          var started = performance.now();
+          file.arrayBuffer().then(function (buffer) {
+            model = new LlamaEngine.Llama(buffer);
+            modelReady(started);
+          }).catch(function (err) {
+            $("loader-status").className = "stats err";
+            $("loader-status").textContent = "could not read that file: " + err.message;
           });
-          $("stats").textContent = "ready";
-        }, 30);
-      } catch (err) {
-        $("boot-msg").innerHTML = "Could not load the model: " + err.message;
+        });
       }
-    });
-  }, 40);
+    } catch (err) {
+      $("boot-msg").className = "sub err";
+      $("boot-msg").textContent = "Could not load the model: " + err.message;
+    }
+  }
+
+  setTimeout(function () { requestAnimationFrame(boot); }, 40);
 
   ["max", "temp"].forEach(function (id) {
     var sync = function () {
@@ -211,13 +269,8 @@
     out.insertAdjacentHTML("beforeend", '<span class="cursor">\u258c</span>');
   }
 
-  /* The model is small enough to run on the main thread, but a single token is
-     still tens of milliseconds of work. Yielding between tokens keeps the page
-     responsive and lets text appear as it is produced. */
-  function nextFrame() {
-    return new Promise(function (resolve) { setTimeout(resolve, 0); });
-  }
-
+  /* A token costs tens of milliseconds of main-thread work, so yield between
+     tokens; that keeps the page responsive and lets text appear as it is made. */
   async function generate() {
     if (busy || !model) return;
     busy = true; cancel = false;
@@ -233,53 +286,50 @@
     p.textContent = prompt;
     $("out").appendChild(p);
 
-    var ids = tokenizer.encode(prompt, true);
-    var maxSeq = Math.min(768, ids.length + maxTokens + 8);
-    state = model.newState(maxSeq);
-    state.pos = 0;
-
-    var logits = null;
-    for (var i = 0; i < ids.length; i++) {
-      logits = model.forward(ids[i], state);
-      if (i % 8 === 0) await nextFrame();
-    }
-
-    var rng = new LlamaEngine.Rng((Date.now() & 0x7fffffff) || 7);
-    var outIds = [];
-    var emitted = "";
-    var t0 = performance.now();
-
-    for (var step = 0; step < maxTokens; step++) {
-      var next = model.sample(logits, {
-        temperature: temperature, topP: 0.9, topK: 40,
-      }, rng);
-
-      if (next === LlamaEngine.EOS_ID) break;
-      outIds.push(next);
-
-      var text = tokenizer.decode(outIds);
-      if (text.length > emitted.length) {
-        append(text.slice(emitted.length));
-        emitted = text;
+    try {
+      var ids = tokenizer.encode(prompt, true);
+      var maxSeq = Math.min(768, ids.length + maxTokens + 8);
+      var state = model.newState(maxSeq);
+      var logits = null, i;
+      for (i = 0; i < ids.length; i++) {
+        logits = model.forward(ids[i], state);
+        if (i % 8 === 0) await nextFrame();
       }
 
-      var secs = (performance.now() - t0) / 1000;
-      $("stats").textContent = outIds.length + " tokens · " + secs.toFixed(1) + "s · "
-        + (outIds.length / Math.max(secs, 0.001)).toFixed(1) + " tok/s";
+      var rng = new LlamaEngine.Rng((Date.now() & 0x7fffffff) || 7);
+      var outIds = [], emitted = "";
+      var t0 = performance.now();
 
-      if (cancel) break;
-      if (state.pos >= maxSeq - 1) break;
+      for (var step = 0; step < maxTokens; step++) {
+        var next = model.sample(logits, { temperature: temperature, topP: 0.9, topK: 40 }, rng);
+        if (next === LlamaEngine.EOS_ID) break;
+        outIds.push(next);
 
-      logits = model.forward(next, state);
-      await nextFrame();
+        var text = tokenizer.decode(outIds);
+        if (text.length > emitted.length) {
+          append(text.slice(emitted.length));
+          emitted = text;
+        }
+
+        var secs = (performance.now() - t0) / 1000;
+        $("stats").textContent = outIds.length + " tokens · " + secs.toFixed(1) + "s · "
+          + (outIds.length / Math.max(secs, 0.001)).toFixed(1) + " tok/s";
+
+        if (cancel || state.pos >= maxSeq - 1) break;
+        logits = model.forward(next, state);
+        await nextFrame();
+      }
+
+      var cursor = $("out").querySelector(".cursor");
+      if (cursor) cursor.remove();
+      $("stats").textContent += " · finished in "
+        + ((performance.now() - t0) / 1000).toFixed(1) + "s";
+    } catch (err) {
+      append("\n[error: " + err.message + "]");
+    } finally {
+      busy = false;
+      $("go").disabled = false; $("stop").disabled = true;
     }
-
-    var cursor = $("out").querySelector(".cursor");
-    if (cursor) cursor.remove();
-    var total = (performance.now() - t0) / 1000;
-    $("stats").textContent += " · finished in " + total.toFixed(1) + "s";
-    busy = false;
-    $("go").disabled = false; $("stop").disabled = true;
   }
 
   $("go").addEventListener("click", generate);

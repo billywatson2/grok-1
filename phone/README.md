@@ -20,9 +20,32 @@ keeps working: there is no server, no install, and it never opens a socket.
 ```bash
 # build it from a checkout (needs the checkpoint: local_llama/download_model.sh)
 python3 tools/build_phone_app.py
-#   -> phone/LlamaPhone.html   21.1 MB, self-contained
-#   -> phone/LlamaPhone.llm    15.4 MB, the raw quantised container
+#   -> phone/LlamaPhone.html      21.1 MB, self-contained (model inside)
+#   -> phone/LlamaPhoneLite.html   0.6 MB, asks you to pick a model file
+#   -> phone/LlamaPhone.llm       15.4 MB, the model itself
 ```
+
+**Two ways to carry it**, pick whichever is easier on your phone:
+
+| | one file | two files |
+|---|---|---|
+| what to move | `LlamaPhone.html` (21 MB) | `LlamaPhoneLite.html` (0.6 MB) + `LlamaPhone.llm` (15 MB) |
+| on the phone | tap it, it runs | open the page, tap *Load a model*, pick the `.llm` |
+| good when | emailing/airdropping one file is fine | the page itself should be quick to send or retype |
+
+### Getting the files onto the phone with no computer
+
+If the only device you have is the phone, you can download them straight from the
+playground server this repo already runs:
+
+```
+http://<your-host>:8000/LlamaPhoneLite.html
+http://<your-host>:8000/LlamaPhone.llm
+```
+
+That needs a network connection **once**, for the download. After the files are
+saved, put the phone in airplane mode and everything still works — the app never
+opens a socket.
 
 You can also build it **on the phone** in Termux after `termux_setup.sh`, since
 that already fetches the checkpoint:

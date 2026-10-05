@@ -53,6 +53,16 @@ DEFAULT_TOKENIZER_BIN = HERE / "models" / "tokenizer.bin"
 LLAMA_SERVER_BIN = HERE / "llama.cpp" / "build" / "bin" / "llama-server"
 WEB_DIR = HERE / "web"
 
+# Built phone app, offered for download so a phone can fetch it directly (over
+# mobile data, say) instead of needing a computer to copy it across. Fixed names
+# only -- nothing here is derived from the request path.
+PHONE_DIR = HERE.parent / "phone"
+DOWNLOADS = {
+    "/LlamaPhone.html": (PHONE_DIR / "LlamaPhone.html", "text/html; charset=utf-8"),
+    "/LlamaPhoneLite.html": (PHONE_DIR / "LlamaPhoneLite.html", "text/html; charset=utf-8"),
+    "/LlamaPhone.llm": (PHONE_DIR / "LlamaPhone.llm", "application/octet-stream"),
+}
+
 
 # --------------------------------------------------------------------------- #
 # numpy backend
@@ -268,6 +278,16 @@ class Handler(BaseHTTPRequestHandler):
         mime, _ = mimetypes.guess_type(target.name)
         self._file(target, mime or "application/octet-stream")
 
+    def _download(self, path: Path, content_type: str) -> None:
+        """Like _file, but offered as a download so a phone browser saves it."""
+        body = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
+        self.end_headers()
+        self.wfile.write(body)
+
     def _sse_start(self) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -302,6 +322,13 @@ class Handler(BaseHTTPRequestHandler):
             self._file(WEB_DIR / "sw.js", "text/javascript; charset=utf-8")
         elif route.startswith("/static/"):
             self._static(route[len("/static/"):])
+        elif route in DOWNLOADS:
+            path, content_type = DOWNLOADS[route]
+            if not path.exists():
+                self._json({"error": f"{path.name} not built yet — run "
+                                     f"tools/build_phone_app.py"}, 404)
+                return
+            self._download(path, content_type)
         elif route == "/health":
             info = dict(self.backend.info())
             info["status"] = "ok"
