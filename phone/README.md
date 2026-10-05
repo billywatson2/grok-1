@@ -150,7 +150,13 @@ no flags to remember.
 
 ## iPhone / iPad
 
-Termux is Android-only, so the "everything on the phone" path is different:
+**The single-file app works here too** — it is just a web page, and it is the
+best iOS option because there is nothing to install. Download
+`LlamaPhone.html` into the Files app, then open it (tap it; if iOS previews it
+instead of opening it, use *Share → Open in Safari*, or serve it over the tunnel
+below). Safari may take a few seconds to decode the 21 MB page on first open.
+
+Termux is Android-only, so the server-based path is different:
 
 * For chat with on-device models, apps like **PocketPal AI** or **LLM Farm** run
   GGUF models locally and overlap with what the playground does.
