@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import mimetypes
 import os
 import queue
 import random
@@ -512,7 +513,49 @@ class Arena:
 # --------------------------------------------------------------------------- #
 class Handler(BaseHTTPRequestHandler):
     arena: Arena = None
+    access_token: str | None = None      # set with --token; None means open access
     protocol_version = "HTTP/1.1"
+
+    # -- access control ----------------------------------------------------- #
+    def _token_from_request(self) -> tuple[str | None, bool]:
+        """Return (token, came_from_query) for this request."""
+        auth = self.headers.get("Authorization") or ""
+        if auth.startswith("Bearer "):
+            return auth[7:].strip(), False
+        for chunk in (self.headers.get("Cookie") or "").split(";"):
+            name, _, value = chunk.strip().partition("=")
+            if name == "arena_token":
+                return value, False
+        query = self.path.split("?", 1)[1] if "?" in self.path else ""
+        for pair in query.split("&"):
+            name, _, value = pair.partition("=")
+            if name == "token":
+                from urllib.parse import unquote_plus
+                return unquote_plus(value), True
+        return None, False
+
+    def _authorized(self) -> bool:
+        """True when the request may proceed; sends the 401 itself when not."""
+        if not self.access_token:
+            return True
+        token, from_query = self._token_from_request()
+        if token == self.access_token:
+            if from_query:
+                # remember it so the page's own asset/API calls work; HttpOnly so
+                # scripts cannot read it back out
+                self._pending_cookie = ("arena_token=" + token
+                                        + "; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000")
+            return True
+        self._json({"error": {"message": "unauthorized: append ?token=... once, "
+                                         "or send Authorization: Bearer <token>"}}, 401)
+        return False
+
+    def end_headers(self):  # noqa: N802
+        cookie = getattr(self, "_pending_cookie", None)
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
+            self._pending_cookie = None
+        super().end_headers()
 
     def log_message(self, fmt, *args):
         if os.environ.get("ARENA_VERBOSE"):
@@ -529,15 +572,31 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _file(self, path: Path, content_type: str) -> None:
-        if not path.exists():
+        if not path.exists() or not path.is_file():
             self._json({"error": f"{path.name} not found"}, 404)
             return
         body = path.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        if path.suffix in (".png", ".webmanifest", ".css", ".js"):
+            self.send_header("Cache-Control", "public, max-age=300")
         self.end_headers()
         self.wfile.write(body)
+
+    def _static(self, relative: str) -> None:
+        """Serve a file from static/ without ever escaping it (path traversal)."""
+        root = STATIC.resolve()
+        try:
+            target = (root / relative.lstrip("/")).resolve()
+        except (OSError, ValueError):
+            self._json({"error": "bad path"}, 400)
+            return
+        if not target.is_relative_to(root):
+            self._json({"error": "bad path"}, 400)
+            return
+        mime, _ = mimetypes.guess_type(target.name)
+        self._file(target, mime or "application/octet-stream")
 
     def _body(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
@@ -574,13 +633,21 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):  # noqa: N802
+        if not self._authorized():
+            return
         route = self.path.split("?")[0]
         if route in ("/", "/index.html"):
             self._file(STATIC / "index.html", "text/html; charset=utf-8")
         elif route == "/leaderboard":
             self._file(STATIC / "leaderboard.html", "text/html; charset=utf-8")
-        elif route == "/static/style.css":
-            self._file(STATIC / "style.css", "text/css; charset=utf-8")
+        elif route == "/manifest.webmanifest":
+            self._file(STATIC / "manifest.webmanifest", "application/manifest+json")
+        elif route == "/sw.js":
+            # served from the root so its scope covers "/" -- required for the
+            # navigations to be handled offline
+            self._file(STATIC / "sw.js", "text/javascript; charset=utf-8")
+        elif route.startswith("/static/"):
+            self._static(route[len("/static/"):])
         elif route == "/health":
             self._json(self._health())
         elif route == "/api/models":
@@ -593,6 +660,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": {"message": f"unknown route {route}"}}, 404)
 
     def do_DELETE(self):  # noqa: N802
+        if not self._authorized():
+            return
         route = self.path.split("?")[0]
         if route.startswith("/api/models/"):
             try:
@@ -610,6 +679,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": {"message": "unknown route"}}, 404)
 
     def do_POST(self):  # noqa: N802
+        if not self._authorized():
+            return
         route = self.path.split("?")[0]
         body = self._body()
         if route == "/api/battle":
@@ -802,6 +873,9 @@ def main() -> None:
     ap.add_argument("--db", type=Path, default=DEFAULT_DB)
     ap.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
     ap.add_argument("--reset", action="store_true", help="delete the ratings database first")
+    ap.add_argument("--token", default=os.environ.get("ARENA_TOKEN"),
+                    help="require this token for every route (also $ARENA_TOKEN). "
+                         "Use it whenever the arena is reachable from other devices.")
     args = ap.parse_args()
 
     if args.reset and args.db.exists():
@@ -811,9 +885,16 @@ def main() -> None:
     store = Store(args.db)
     arena = Arena(store, args.registry)
     Handler.arena = arena
+    Handler.access_token = args.token or None
     print(f"[arena] {len(arena.models)} contestants registered, "
           f"{len(arena.available())} ready")
     print(f"[arena] listening on http://{args.host}:{args.port}/")
+    if args.token:
+        print("[arena] access token required (open /?token=... once, or send "
+              "Authorization: Bearer <token>)")
+    elif args.host not in ("127.0.0.1", "localhost"):
+        print("[arena] NOTE: bound to a non-local address with no token -- anyone who "
+              "can reach this port can use your models and cast votes")
 
     # SIGTERM (Ctrl-C's cousin, and what process managers send) should stop the
     # llama-server children too, not leave them orphaned on their ports.

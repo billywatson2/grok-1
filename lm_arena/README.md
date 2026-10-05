@@ -33,6 +33,10 @@ cd ../lm_arena
 python3 arena.py                # → http://localhost:8100
 ```
 
+**On a phone instead of a computer: see [`../phone/README.md`](../phone/README.md).**
+The arena is a PWA — it installs to the home screen and, with the models running
+on the phone itself, needs no WiFi at all.
+
 Open `http://localhost:8100`, type a prompt, hit **Start battle**, watch both
 models stream, then vote. The leaderboard is at `/leaderboard`.
 
@@ -42,7 +46,20 @@ Useful flags:
 python3 arena.py --port 8100 --host 0.0.0.0    # defaults
 python3 arena.py --reset                       # wipe ratings and start over
 python3 arena.py --registry my_models.json     # a different contestant list
+python3 arena.py --token LONG_SECRET           # require a token (see below)
+python3 arena.py --host 127.0.0.1              # this device only, no network
 ```
+
+`--token` (or `$ARENA_TOKEN`) locks every route behind a shared secret. Open the
+page once with `?token=...`; it is then kept as an HttpOnly cookie. Use it
+whenever the arena is reachable from another device — otherwise anyone who can
+reach the port can spend your CPU, vote, and delete contestants. Binding to
+`127.0.0.1` needs no token: nothing outside the device can connect.
+
+The UI is installable (PWA): *Add to Home Screen* gives it its own icon and
+window, and a service worker keeps the shell cached so a model-server restart
+does not leave you staring at a blank page. Generation and voting are never
+cached.
 
 ## The contestants
 

@@ -2,8 +2,18 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>LM Arena</title>
+<meta name="description" content="Blind A/B battles between local language models." />
+<meta name="theme-color" content="#0f1115" />
+<meta name="color-scheme" content="dark" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Arena" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="icon" href="/static/icon-192.png" sizes="192x192" />
+<link rel="apple-touch-icon" href="/static/apple-touch-icon-180.png" />
 <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
@@ -17,6 +27,7 @@
     <div class="badges">
       <span class="badge" id="b-models">contestants: …</span>
       <span class="badge" id="b-votes">votes: …</span>
+      <span class="badge" id="b-pwa" style="display:none">offline-ready</span>
     </div>
   </nav>
   <p class="sub">
@@ -294,6 +305,14 @@ Object.entries(VOTE_BUTTONS).forEach(([id, choice]) =>
 $("prompt").addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === "Enter") startBattle();
 });
+
+/* --- PWA: installable, works from the home screen, no network needed once loaded --- */
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").then(() => {
+    $("b-pwa").style.display = "";
+  }).catch(() => { /* http:// on a LAN IP: service workers need localhost or https */ });
+  navigator.serviceWorker.addEventListener("message", () => loadState());
+}
 
 loadState();
 </script>

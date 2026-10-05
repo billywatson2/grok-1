@@ -4,10 +4,17 @@
   --a: #7cc4ff; --b: #f0a3c8; --warn: #ffb4a2; --good: #8be9a8; --bad: #ff8f8f;
 }
 * { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
   font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: contain;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
+/* 16px inputs stop iOS Safari from zooming the page when you tap a field */
+textarea, input[type=text], input[type=range], select { font-size: 16px; }
+button, .vote { touch-action: manipulation; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 .wrap { max-width: 1120px; margin: 0 auto; padding: 26px 20px 70px; }
@@ -108,3 +115,57 @@ code { background: var(--panel-2); border: 1px solid var(--line); border-radius:
 .history .prompt { color: var(--text); }
 .history .outcome { color: var(--dim); font-size: 12.5px; margin-top: 3px; }
 .err { color: var(--warn); }
+
+
+/* ---------------------------------------------------------------------------
+   Phone layout. The battle view matters most here: on a narrow screen the two
+   answers stack (never side by side, so neither is favoured by position), the
+   controls get thumb-sized, and the vote row sticks to the bottom of the
+   viewport while you read.
+   --------------------------------------------------------------------------- */
+@media (max-width: 780px) {
+  .wrap { padding: 16px 13px 96px; }
+  nav { gap: 10px; }
+  nav h1 { font-size: 18px; }
+  nav .links { order: 3; width: 100%; }
+  .badges { margin-left: 0; order: 2; }
+  p.sub { font-size: 13px; }
+  .panel { padding: 14px; border-radius: 11px; }
+  textarea { min-height: 84px; }
+  .controls { grid-template-columns: 1fr 1fr; gap: 12px; }
+  .ctl:last-child { grid-column: 1 / -1; }
+  input[type=range] { height: 34px; }          /* thumb-sized drag target */
+
+  button, button.vote { min-height: 48px; font-size: 15.5px; }
+  .row > button { flex: 1 1 auto; }
+
+  /* the answer columns become full-width cards, A above B */
+  .grid2 { gap: 12px; }
+  .out { min-height: 150px; font-size: 14px; padding: 11px 12px; }
+
+  /* voting stays reachable while you scroll the answers */
+  #vote-panel {
+    position: sticky; bottom: 0; z-index: 20; margin-bottom: 8px;
+    border-radius: 12px 12px 0 0;
+    box-shadow: 0 -10px 24px rgba(0, 0, 0, .45);
+    padding-bottom: calc(14px + env(safe-area-inset-bottom));
+  }
+  #vote-panel .row { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+  #vote-panel .row > button { width: 100%; }
+  #vote-panel .meta { grid-column: 1 / -1; }
+
+  /* the standings table is unreadable at 360px wide; drop the columns that
+     can be inferred and let the rest wrap */
+  .panel { overflow-x: auto; }
+  table.board { min-width: 520px; }
+  table.board th, table.board td { padding: 8px 8px; }
+}
+
+@media (display-mode: standalone) {
+  /* installed app: no browser chrome, so give the top a little air */
+  .wrap { padding-top: calc(20px + env(safe-area-inset-top)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cursor { animation: none; }
+}

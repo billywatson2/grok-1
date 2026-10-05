@@ -13,9 +13,22 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$HERE/llama.cpp"
 JOBS="$(nproc 2>/dev/null || echo 2)"
 
+# --- 0. platform notes ------------------------------------------------------ #
+# Termux (Android) is bionic, not glibc: the manylinux cmake wheels on PyPI do
+# not apply there, so its own packages must be used instead.
+if [ -n "${PREFIX:-}" ] && [ "${PREFIX#/data/data/com.termux}" != "$PREFIX" ]; then
+  IS_TERMUX=1
+  echo "==> Termux detected (Android)"
+else
+  IS_TERMUX=0
+fi
+
 # --- 1. get cmake ----------------------------------------------------------- #
 if ! command -v cmake >/dev/null 2>&1; then
-  if [ -x "$HOME/.local/bin/cmake" ]; then
+  if [ "$IS_TERMUX" = "1" ]; then
+    echo "==> cmake missing; installing from Termux packages"
+    pkg install -y cmake clang make pkg-config
+  elif [ -x "$HOME/.local/bin/cmake" ]; then
     export PATH="$HOME/.local/bin:$PATH"
   else
     echo "==> cmake missing; installing from PyPI (needs no root)"

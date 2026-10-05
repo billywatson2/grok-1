@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import mimetypes
 import os
 import subprocess
 import sys
@@ -241,15 +242,31 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _file(self, path: Path, content_type: str) -> None:
-        if not path.exists():
+        if not path.exists() or not path.is_file():
             self._json({"error": f"{path.name} not found"}, 404)
             return
         body = path.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        if path.suffix in (".png", ".webmanifest", ".js", ".css"):
+            self.send_header("Cache-Control", "public, max-age=300")
         self.end_headers()
         self.wfile.write(body)
+
+    def _static(self, relative: str) -> None:
+        """Serve a file from web/ without ever escaping it (path traversal)."""
+        root = WEB_DIR.resolve()
+        try:
+            target = (root / relative.lstrip("/")).resolve()
+        except (OSError, ValueError):
+            self._json({"error": "bad path"}, 400)
+            return
+        if not target.is_relative_to(root):
+            self._json({"error": "bad path"}, 400)
+            return
+        mime, _ = mimetypes.guess_type(target.name)
+        self._file(target, mime or "application/octet-stream")
 
     def _sse_start(self) -> None:
         self.send_response(200)
@@ -279,6 +296,12 @@ class Handler(BaseHTTPRequestHandler):
         route = self.path.split("?")[0]
         if route in ("/", "/index.html"):
             self._file(WEB_DIR / "index.html", "text/html; charset=utf-8")
+        elif route == "/manifest.webmanifest":
+            self._file(WEB_DIR / "manifest.webmanifest", "application/manifest+json")
+        elif route == "/sw.js":
+            self._file(WEB_DIR / "sw.js", "text/javascript; charset=utf-8")
+        elif route.startswith("/static/"):
+            self._static(route[len("/static/"):])
         elif route == "/health":
             info = dict(self.backend.info())
             info["status"] = "ok"

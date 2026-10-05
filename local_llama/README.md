@@ -5,7 +5,8 @@ dependency-free reference implementation up to llama.cpp with an
 OpenAI-compatible HTTP server and a browser playground.
 
 **See also:** [`../lm_arena`](../lm_arena) builds a blind A/B battle arena and Elo
-leaderboard on top of these models.
+leaderboard on top of these models, and [`../phone`](../phone) runs either one
+entirely on an Android phone — no computer, no WiFi.
 
 This directory is self-contained and independent of the Grok-1 code at the repo
 root. (Grok-1 itself is a 314B-parameter model that needs a multi-GPU cluster —
@@ -31,6 +32,9 @@ cd local_llama
 ./download_model.sh                 # ~61 MB, verified checksums
 python3 np_llama.py --prompt "Once upon a time" --max-tokens 200
 ```
+
+On a phone, this whole directory works under Termux — see
+[`../phone/README.md`](../phone/README.md) for the scripted setup.
 
 That is the whole minimum: **numpy is the only dependency**. You get streaming
 text at roughly 60 tokens/sec on two CPU cores, ~250 MB RAM.
