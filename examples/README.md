@@ -1,5 +1,9 @@
 # Groq → E2B code interpreter
 
+> A Node/TypeScript version of the E2B half lives at the repo root: `index.ts`
+> (`npm install && npx tsx ./index.ts`). This directory is the Python version and
+> is the one that can also run code locally with `--local`, no E2B account needed.
+
 Let a model on Groq write Python, then run that Python in a throwaway E2B
 sandbox. Nothing executes on your machine, and the sandbox is gone when the
 script exits.

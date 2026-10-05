@@ -60,7 +60,9 @@ def load_env_file(path: Path | None = None) -> None:
             continue
         key, _, value = line.partition("=")
         key, value = key.strip(), value.strip().strip("'\"")
-        if key and value and key not in os.environ:
+        # an empty variable counts as unset: `export FOO=` in a shell profile
+        # should not permanently shadow the value in .env
+        if key and value and not os.environ.get(key):
             os.environ[key] = value
 
 

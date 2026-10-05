@@ -26,3 +26,4 @@ phone/LlamaPhoneLite.html
 
 # secrets: never commit this
 .env
+node_modules/
