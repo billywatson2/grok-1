@@ -38,6 +38,7 @@ import os
 import queue
 import random
 import signal
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -910,6 +911,49 @@ class Handler(BaseHTTPRequestHandler):
                     "rated": winner != "both_bad"})
 
 
+def make_server(host: str, port: int, handler):
+    """An IPv4 server (which is what the preview detector looks for) plus an
+    IPv6 loopback listener on the same port.
+
+    Why both: the stdlib default binds IPv4 only, so a proxy that resolves
+    "localhost" to ::1 gets connection-refused while every IPv4 test passes --
+    it looks exactly like a dead server. But binding the *wildcard* only as IPv6
+    (`::`) hides the port from tooling that scans for 0.0.0.0. So: keep the IPv4
+    bind that gets detected, and add [::1]:port for IPv6-localhost clients.
+
+    The accept backlog is raised from the stdlib default of 5 to 128: a browser
+    opens about six connections per host, and 5 slots is easy to exhaust.
+    """
+    ThreadingHTTPServer.request_queue_size = 128
+    ThreadingHTTPServer.daemon_threads = True
+
+    if host in ("0.0.0.0", "", "::"):
+        primary = ThreadingHTTPServer(("0.0.0.0", port), handler)
+        threading.Thread(target=_serve_ipv6_loopback, args=(port, handler),
+                         daemon=True).start()
+        return primary
+    return ThreadingHTTPServer((host, port), handler)
+
+
+def _serve_ipv6_loopback(port: int, handler) -> None:
+    """Second listener for ::1 only; silently skipped where IPv6 is unavailable."""
+    class V6Loopback(ThreadingHTTPServer):
+        address_family = socket.AF_INET6
+        request_queue_size = 128
+        daemon_threads = True
+
+        def server_bind(self):
+            # V6ONLY keeps this socket off IPv4, so it cannot clash with the
+            # 0.0.0.0 listener on the same port.
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            super().server_bind()
+
+    try:
+        V6Loopback(("::1", port), handler).serve_forever()
+    except OSError:
+        pass  # no IPv6 here, or the port is taken: the IPv4 listener still serves
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -945,7 +989,7 @@ def main() -> None:
     # llama-server children too, not leave them orphaned on their ports.
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt))
 
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    server = make_server(args.host, args.port, Handler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
