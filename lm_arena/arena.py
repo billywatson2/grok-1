@@ -595,7 +595,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        if path.suffix in (".png", ".webmanifest", ".css", ".js"):
+        if path.suffix in (".html", ""):
+            # never cache a page: a stale copy looks exactly like a broken app
+            self.send_header("Cache-Control", "no-store, must-revalidate")
+        elif path.suffix in (".png", ".webmanifest", ".css", ".js"):
             self.send_header("Cache-Control", "public, max-age=300")
         self.end_headers()
         self._write_body(body)

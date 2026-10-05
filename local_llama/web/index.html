@@ -248,9 +248,7 @@ async function run() {
 }
 
 // installable: the page keeps working from the home screen, generations stay live
-if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("/sw.js").catch(() => {});
-}
+
 
 $("go").addEventListener("click", run);
 $("stop").addEventListener("click", () => controller && controller.abort());

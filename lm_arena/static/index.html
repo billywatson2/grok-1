@@ -307,12 +307,9 @@ $("prompt").addEventListener("keydown", (e) => {
 });
 
 /* --- PWA: installable, works from the home screen, no network needed once loaded --- */
-if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("/sw.js").then(() => {
-    $("b-pwa").style.display = "";
-  }).catch(() => { /* http:// on a LAN IP: service workers need localhost or https */ });
-  navigator.serviceWorker.addEventListener("message", () => loadState());
-}
+/* No service worker here on purpose: this app needs the model server to be
+   useful, so a cached shell buys nothing and a stale cache can serve a broken
+   page. The genuinely offline app is phone/LlamaPhone.html. */
 
 loadState();
 </script>
